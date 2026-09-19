@@ -78,6 +78,28 @@ export function trackEvent(
     }
   });
 
+  // Asynchronously send to CoMeal backend API layer
+  if (typeof fetch === 'function') {
+    fetch('/api/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event: newEvent.event,
+        sessionId: newEvent.sessionId,
+        mealBatchId: newEvent.mealDropId,
+        timestamp: newEvent.timestamp,
+        context: {
+          mealName: newEvent.mealName,
+          neighbourhood: newEvent.location,
+          ...(newEvent.metadata || {}),
+        },
+      }),
+    }).catch((err) => {
+      // Non-blocking background log
+      console.debug('Backend event tracking buffered locally', err);
+    });
+  }
+
   return newEvent;
 }
 
@@ -107,25 +129,20 @@ export function submitFeedback(feedback: {
     console.error('Error saving feedback', err);
   }
 
-  // Also log the event
-  trackEvent('feedback_option_selected', {
-    mealDropId: feedback.mealDropId,
-    mealName: feedback.mealName,
-    metadata: {
-      type: feedback.type,
-      selectedOption: feedback.selectedOption,
-      hasComment: Boolean(feedback.comment?.trim()),
-    },
-  });
-
-  if (feedback.comment?.trim()) {
-    trackEvent('comment_submitted', {
-      mealDropId: feedback.mealDropId,
-      mealName: feedback.mealName,
-      metadata: {
-        type: feedback.type,
-        commentLength: feedback.comment.length,
-      },
+  // Send to backend /api/comments
+  if (typeof fetch === 'function') {
+    fetch('/api/comments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: newFeedback.sessionId,
+        mealBatchId: newFeedback.mealDropId,
+        context: feedback.type === 'conversion' ? 'post_order' : 'abandonment',
+        primaryFactor: feedback.selectedOption,
+        comment: feedback.comment || '',
+      }),
+    }).catch((err) => {
+      console.debug('Backend comment buffered locally', err);
     });
   }
 

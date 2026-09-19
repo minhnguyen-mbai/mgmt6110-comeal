@@ -37,7 +37,12 @@ export interface MealDrop {
   cuisine: string;
   pricePerPortion: number;
   neighbourhood: string;
-  distanceKm: number; // e.g. 1.2
+  /**
+   * DEPRECATED - demo seed value, no longer rendered anywhere.
+   * User-visible distance now comes from real OneMap walking routes via
+   * useWalkingDistance(). Do not display this field.
+   */
+  distanceKm: number;
   pickupLocation: string; // e.g. "Blk 318 Clementi Ave 4 (Void Deck near Lift B)"
   pickupWindow: string; // e.g. "6:30 – 8:00 PM"
   deliveryArea: string;
@@ -118,3 +123,34 @@ export type ScreenState =
   | { screen: 'detail'; dropId: string }
   | { screen: 'join'; dropId: string }
   | { screen: 'feedback'; dropId?: string; type: 'conversion' | 'abandonment' };
+
+/**
+ * A location the user explicitly searched for and selected.
+ * Lives in the browser session only. Never written to behavioural analytics -
+ * see stripPreciseLocation() on the server, which enforces that server-side.
+ */
+export interface UserLocation {
+  address: string;
+  postalCode: string;
+  latitude: number;
+  longitude: number;
+}
+
+/** A real OneMap walking route. */
+export interface WalkingRoute {
+  distanceMeters: number;
+  distanceKm: number;
+  walkingSeconds: number;
+  walkingMinutes: number;
+}
+
+/**
+ * Distance display state for one meal card.
+ * 'idle' means no location chosen yet - the UI shows a neutral prompt rather
+ * than any distance figure.
+ */
+export type DistanceState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'ok'; route: WalkingRoute }
+  | { status: 'unavailable' };

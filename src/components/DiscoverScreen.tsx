@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { MealDrop, DayBucket } from '../types';
+import React, { useState, useEffect } from 'react';
+import { MealDrop, DayBucket, UserLocation } from '../types';
 import {
   MapPin,
   Users,
@@ -12,8 +12,12 @@ import {
   Truck,
   ShoppingBag,
   Sparkles,
+  Search,
+  Loader2,
 } from 'lucide-react';
 import { trackEvent } from '../services/tracker';
+import { fetchWeather, WeatherResponse, searchLocation, fetchHealth } from '../services/api';
+import { useWalkingDistance, formatKm, distanceBand } from '../services/distance';
 
 interface DiscoverScreenProps {
   drops: MealDrop[];
@@ -22,6 +26,8 @@ interface DiscoverScreenProps {
   onLocationChange: (loc: string) => void;
   selectedDay: DayBucket | 'all';
   onDayChange: (day: DayBucket | 'all') => void;
+  userLocation: UserLocation | null;
+  onUserLocationChange: (loc: UserLocation | null) => void;
 }
 
 const LOCATIONS = ['All', 'Clementi', 'Tampines', 'Bugis', 'Queenstown', 'Jurong East'];
@@ -33,8 +39,93 @@ export const DiscoverScreen: React.FC<DiscoverScreenProps> = ({
   onLocationChange,
   selectedDay,
   onDayChange,
+  userLocation,
+  onUserLocationChange,
 }) => {
   const [filterQuery, setFilterQuery] = useState('');
+
+  // Location search (real OneMap geocoding via the backend).
+  const [locQuery, setLocQuery] = useState('');
+  const [locResults, setLocResults] = useState<UserLocation[]>([]);
+  const [locSearching, setLocSearching] = useState(false);
+  const [locError, setLocError] = useState<string | null>(null);
+  const [providerReady, setProviderReady] = useState<boolean | null>(null);
+  const [weatherData, setWeatherData] = useState<WeatherResponse | null>(null);
+  const [weatherFailed, setWeatherFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setWeatherFailed(false);
+    fetchWeather(selectedLocation === 'All' ? undefined : selectedLocation)
+      .then((res) => {
+        if (!active) return;
+        if (res && res.ok !== false) {
+          setWeatherData(res);
+          setWeatherFailed(false);
+        } else {
+          setWeatherData(res);
+          setWeatherFailed(true);
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        setWeatherFailed(true);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedLocation]);
+
+  // Factual provider status - never inferred from configuration alone.
+  useEffect(() => {
+    let active = true;
+    fetchHealth().then((h) => {
+      if (active) setProviderReady(h ? Boolean(h.locationProviderAuthenticated) : false);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const runLocationSearch = async (raw: string) => {
+    const query = raw.trim();
+    if (query.length < 2) {
+      setLocError('Enter a block, postal code or area.');
+      setLocResults([]);
+      return;
+    }
+
+    setLocSearching(true);
+    setLocError(null);
+    setLocResults([]);
+
+    const res = await searchLocation(query);
+    setLocSearching(false);
+
+    if (!res.ok || res.results.length === 0) {
+      setLocError(res.message || 'No matching Singapore location found.');
+      return;
+    }
+
+    // Exactly one match is unambiguous; otherwise the user chooses.
+    if (res.results.length === 1) {
+      selectUserLocation(res.results[0]);
+      return;
+    }
+    setLocResults(res.results);
+  };
+
+  const selectUserLocation = (place: UserLocation) => {
+    onUserLocationChange(place);
+    setLocResults([]);
+    setLocQuery('');
+    setLocError(null);
+    // Analytics records that a location was chosen - never which one.
+    trackEvent('location_selected', {
+      metadata: { hasCoordinates: true },
+    });
+  };
 
   const filteredDrops = drops.filter((drop) => {
     const matchesLoc =
@@ -48,7 +139,11 @@ export const DiscoverScreen: React.FC<DiscoverScreenProps> = ({
     return matchesLoc && matchesDay && matchesQuery;
   });
 
-  const handleCardClick = (drop: MealDrop, clickTarget: 'card' | 'cook' | 'distance' = 'card') => {
+  const handleCardClick = (
+    drop: MealDrop,
+    clickTarget: 'card' | 'cook' | 'distance' = 'card',
+    distanceBandForEvent?: string
+  ) => {
     if (clickTarget === 'cook') {
       trackEvent('home_cook_clicked', {
         mealDropId: drop.id,
@@ -57,10 +152,12 @@ export const DiscoverScreen: React.FC<DiscoverScreenProps> = ({
         metadata: { cookName: drop.cookName, rating: drop.rating, batches: drop.completedBatches },
       });
     } else if (clickTarget === 'distance') {
+      // PRIVACY: only the coarse band is recorded, never an exact distance,
+      // coordinate or address.
       trackEvent('distance_clicked', {
         mealDropId: drop.id,
         location: drop.neighbourhood,
-        metadata: { distanceKm: drop.distanceKm },
+        metadata: { distanceBand: distanceBandForEvent },
       });
     } else {
       trackEvent('meal_clicked', {
@@ -95,6 +192,13 @@ export const DiscoverScreen: React.FC<DiscoverScreenProps> = ({
       location: loc,
       metadata: { previousLocation: selectedLocation },
     });
+    // The neighbourhood pills double as location presets: selecting one
+    // geocodes that area so walking distances can be calculated.
+    if (loc !== 'All') {
+      void runLocationSearch(loc);
+    } else {
+      onUserLocationChange(null);
+    }
   };
 
   return (
@@ -122,14 +226,27 @@ export const DiscoverScreen: React.FC<DiscoverScreenProps> = ({
           <div className="w-6 h-6 rounded-lg bg-sky-100 flex items-center justify-center flex-shrink-0 text-sky-700 mt-0.5">
             <CloudRain className="w-3.5 h-3.5" />
           </div>
-          <div className="text-[11px] leading-tight space-y-0.5">
-            <div className="flex items-center gap-1.5">
-              <span className="font-bold text-sky-900">Evening Weather Forecast</span>
-              <span className="text-[9px] text-sky-700 bg-sky-200/60 px-1 rounded">NEA 2-Hr</span>
+          <div className="text-[11px] leading-tight space-y-1 flex-1">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-sky-900">
+                {selectedLocation !== 'All' ? `${selectedLocation} weather` : `${weatherData?.area || 'Clementi'} weather`}
+              </span>
+              <span className="text-[9px] text-sky-700 bg-sky-200/60 px-1 rounded font-medium">NEA 2-Hr</span>
             </div>
-            <p className="text-sky-800">
-              Evening showers expected. Pickup is still available; delivery may be more convenient tonight.
-            </p>
+            {weatherFailed || !weatherData || weatherData.ok === false ? (
+              <p className="text-sky-800">Weather context is temporarily unavailable.</p>
+            ) : (
+              <div className="space-y-0.5">
+                <div className="text-xs font-semibold text-sky-950">
+                  {weatherData.forecast}
+                </div>
+                {weatherData.contextualNote && (
+                  <p className="text-sky-800 text-[11px] leading-snug">
+                    {weatherData.contextualNote}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -140,8 +257,84 @@ export const DiscoverScreen: React.FC<DiscoverScreenProps> = ({
               <MapPin className="w-3 h-3 text-orange-600" />
               <span>Neighbourhood Area</span>
             </span>
-            <span className="text-[10px] text-stone-600 font-normal lowercase">OneMap geocoding demo</span>
+            <span
+              className={`text-[10px] font-normal lowercase ${
+                providerReady === false ? 'text-stone-500' : 'text-stone-600'
+              }`}
+            >
+              {providerReady === null
+                ? 'checking OneMap…'
+                : providerReady
+                ? 'OneMap connected'
+                : 'OneMap unavailable'}
+            </span>
           </div>
+
+          {/* Real location entry - geocoded by OneMap through the backend. */}
+          {userLocation ? (
+            <div className="flex items-center justify-between gap-2 bg-stone-50 border border-stone-200 rounded-lg px-2.5 py-1.5">
+              <span className="text-[11px] text-stone-700 truncate">
+                Distances from <span className="font-semibold text-stone-900">{userLocation.address}</span>
+              </span>
+              <button
+                type="button"
+                id="btn-change-location"
+                onClick={() => onUserLocationChange(null)}
+                className="text-[11px] font-semibold text-orange-700 hover:text-orange-800 flex-shrink-0 cursor-pointer"
+              >
+                Change
+              </button>
+            </div>
+          ) : (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void runLocationSearch(locQuery);
+              }}
+              className="flex items-center gap-1.5"
+            >
+              <div className="relative flex-1">
+                <Search className="w-3.5 h-3.5 text-stone-400 absolute left-2 top-1/2 -translate-y-1/2" />
+                <input
+                  id="input-location-search"
+                  value={locQuery}
+                  onChange={(e) => setLocQuery(e.target.value)}
+                  placeholder="Your block, postal code or area"
+                  className="w-full text-xs pl-7 pr-2 py-1.5 rounded-lg border border-stone-200 bg-white placeholder:text-stone-400 focus:outline-none focus:border-stone-400"
+                />
+              </div>
+              <button
+                type="submit"
+                id="btn-check-distance"
+                disabled={locSearching}
+                className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-stone-900 text-white disabled:opacity-60 whitespace-nowrap cursor-pointer"
+              >
+                {locSearching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Check distance'}
+              </button>
+            </form>
+          )}
+
+          {locError && <p className="text-[11px] text-stone-500">{locError}</p>}
+
+          {locResults.length > 0 && (
+            <ul className="border border-stone-200 rounded-lg divide-y divide-stone-100 overflow-hidden">
+              {locResults.map((place, i) => (
+                <li key={`${place.latitude},${place.longitude},${i}`}>
+                  <button
+                    type="button"
+                    onClick={() => selectUserLocation(place)}
+                    className="w-full text-left text-[11px] px-2.5 py-1.5 hover:bg-stone-50 cursor-pointer"
+                  >
+                    <span className="text-stone-800">{place.address}</span>
+                    {place.postalCode && (
+                      <span className="text-stone-400"> · {place.postalCode}</span>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar scroll-smooth">
             {LOCATIONS.map((loc) => {
               const active = selectedLocation === loc;
@@ -235,18 +428,14 @@ export const DiscoverScreen: React.FC<DiscoverScreenProps> = ({
                     />
 
                     {/* Proximity Pill (Top Left) */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
+                    <CardDistance
+                      drop={drop}
+                      userLocation={userLocation}
+                      onClick={(e, band) => {
                         e.stopPropagation();
-                        handleCardClick(drop, 'distance');
+                        handleCardClick(drop, 'distance', band);
                       }}
-                      className="absolute top-2 left-2 bg-stone-900/85 backdrop-blur-xs text-white text-[10px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs"
-                      title="Approximate distance to pickup location"
-                    >
-                      <MapPin className="w-2.5 h-2.5 text-orange-400" />
-                      <span>{drop.distanceKm} km away</span>
-                    </button>
+                    />
 
                     {/* Free Pickup Badge (Top Right) */}
                     <div className="absolute top-2 right-2 bg-emerald-600/90 backdrop-blur-xs text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-xs">
@@ -332,5 +521,52 @@ export const DiscoverScreen: React.FC<DiscoverScreenProps> = ({
         )}
       </div>
     </div>
+  );
+};
+
+
+/**
+ * Distance badge for one meal card.
+ *
+ * Shows a real OneMap walking distance once the user has chosen a location.
+ * Before that it shows a neutral prompt - never a placeholder number. Each card
+ * resolves independently, so one failed route cannot blank the others.
+ */
+const CardDistance: React.FC<{
+  drop: MealDrop;
+  userLocation: UserLocation | null;
+  onClick: (e: React.MouseEvent, distanceBand?: string) => void;
+}> = ({ drop, userLocation, onClick }) => {
+  const state = useWalkingDistance(drop.id, userLocation);
+
+  const label =
+    state.status === 'ok'
+      ? formatKm(state.route.distanceKm)
+      : state.status === 'loading'
+      ? 'Checking…'
+      : state.status === 'unavailable'
+      ? 'Distance unavailable'
+      : 'Check distance';
+
+  const band = state.status === 'ok' ? distanceBand(state.route.distanceKm) : undefined;
+
+  return (
+    <button
+      type="button"
+      onClick={(e) => onClick(e, band)}
+      className="absolute top-2 left-2 bg-stone-900/85 backdrop-blur-xs text-white text-[10px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs"
+      title={
+        state.status === 'ok'
+          ? 'Walking distance to pickup location (OneMap)'
+          : 'Set your location to check walking distance'
+      }
+    >
+      {state.status === 'loading' ? (
+        <Loader2 className="w-2.5 h-2.5 text-orange-400 animate-spin" />
+      ) : (
+        <MapPin className="w-2.5 h-2.5 text-orange-400" />
+      )}
+      <span>{label}</span>
+    </button>
   );
 };

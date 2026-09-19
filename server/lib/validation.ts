@@ -85,6 +85,38 @@ export const ALLOWED_ABANDONMENT_FACTORS = new Set([
   'Other',
 ]);
 
+/**
+ * PRIVACY RULE - BEHAVIOURAL ANALYTICS:
+ * A user's exact location must never reach stored analytics. Only a coarse
+ * distanceBand ("<1km", "1-2km", "2-5km", "5km+") is permitted.
+ *
+ * The user's selected coordinates legitimately exist in the browser session and
+ * in transit to the routing endpoint, but must not be written to events.json.
+ * This list is enforced server-side in saveEvent(), so a client that sends them
+ * anyway still cannot persist them.
+ */
+const FORBIDDEN_LOCATION_KEY =
+  /^(lat|lng|lon|latitude|longitude|coord|coords|coordinates|address|fulladdress|streetaddress|postal|postalcode|placeaddress|selectedaddress|userlat|userlng|userlatitude|userlongitude|fromlat|fromlng|tolat|tolng|distancekm|distancemeters|walkingseconds)$/i;
+
+/**
+ * Recursively removes precise-location keys from an analytics context object.
+ * Returns a new object; the caller's input is not mutated.
+ */
+export function stripPreciseLocation<T>(value: T, depth = 0): T {
+  if (depth > 6 || value === null || typeof value !== 'object') return value;
+
+  if (Array.isArray(value)) {
+    return value.map((v) => stripPreciseLocation(v, depth + 1)) as unknown as T;
+  }
+
+  const out: Record<string, any> = {};
+  for (const [key, val] of Object.entries(value as Record<string, any>)) {
+    if (FORBIDDEN_LOCATION_KEY.test(key)) continue;
+    out[key] = stripPreciseLocation(val, depth + 1);
+  }
+  return out as T;
+}
+
 export function sanitizeText(input: unknown): string {
   if (typeof input !== 'string') return '';
   // Strip potential HTML tags and decode basic symbols

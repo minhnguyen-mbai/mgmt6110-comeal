@@ -469,14 +469,21 @@ export const AnalyticsDrawer: React.FC<AnalyticsDrawerProps> = ({
                     <div>
                       <p className="font-bold text-stone-900 text-xs">Location & Distance Layer</p>
                       <p className="text-[11px] text-stone-500">
-                        {healthData?.locationProviderConfigured
-                          ? 'OneMap Routing API'
-                          : 'Haversine Geographic Spherical Distance'}
+                        {healthData?.locationProviderAuthenticated
+                          ? 'OneMap search + walking routing'
+                          : 'Walking distance unavailable'}
                       </p>
                     </div>
                   </div>
-                  <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
-                    {healthData?.locationProviderConfigured ? 'ONEMAP ACTIVE' : 'HAVERSINE ACTIVE'}
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      healthData?.locationProviderAuthenticated
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-stone-200 text-stone-700'
+                    }`}
+                  >
+                    {/* Reflects a verified OneMap token, not merely configuration. */}
+                    {healthData?.locationProviderAuthenticated ? 'ONEMAP CONNECTED' : 'ONEMAP UNAVAILABLE'}
                   </span>
                 </div>
 
@@ -524,7 +531,15 @@ export const AnalyticsDrawer: React.FC<AnalyticsDrawerProps> = ({
                 <p className="font-bold text-stone-900">PS3 Data Source Transparency</p>
                 <ul className="list-disc pl-4 space-y-0.5 text-stone-600">
                   <li><strong>Real External:</strong> Singapore 2-hour weather forecast from NEA / data.gov.sg API.</li>
-                  <li><strong>Real Calculation:</strong> Location and distance calculated with Singapore geographic coordinates and OneMap elastic search.</li>
+                  <li>
+                    <strong>Real External:</strong> Address search and walking distance/time from the
+                    OneMap Singapore API{' '}
+                    {healthData
+                      ? healthData.locationProviderAuthenticated
+                        ? '(connected).'
+                        : '(currently unavailable — distances are not shown).'
+                      : '.'}
+                  </li>
                   <li><strong>Marketplace Mock:</strong> Home cooks, menu items, ratings, and batch portions are curated prototype demo data.</li>
                   <li><strong>Privacy:</strong> No personal coordinates or API keys are stored in client logs.</li>
                 </ul>

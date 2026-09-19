@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { safeLog } from './safeLog';
+import { stripPreciseLocation } from './validation';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const EVENTS_FILE = path.join(DATA_DIR, 'events.json');
@@ -57,6 +58,11 @@ export async function initStorage() {
 
 export async function saveEvent(event: any) {
   await initStorage();
+
+  // Privacy choke point: exact coordinates and addresses are stripped here, so
+  // they cannot reach events.json from any caller. Only distanceBand survives.
+  const safeMetadata = stripPreciseLocation(event.context || event.metadata || {});
+
   const record = {
     id: event.id || `evt_${Math.random().toString(36).substring(2, 9)}`,
     session_id: event.sessionId,
@@ -64,7 +70,7 @@ export async function saveEvent(event: any) {
     meal_batch_id: event.mealBatchId || null,
     neighbourhood: event.context?.neighbourhood || event.location || null,
     fulfilment_type: event.context?.fulfilmentType || null,
-    metadata: event.context || event.metadata || {},
+    metadata: safeMetadata,
     created_at: event.timestamp || new Date().toISOString(),
   };
 

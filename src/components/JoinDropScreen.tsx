@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MealDrop } from '../types';
+import { MealDrop, UserLocation } from '../types';
 import {
   ArrowLeft,
   ShoppingBag,
@@ -16,9 +16,11 @@ import {
 } from 'lucide-react';
 import { trackEvent, getSessionId } from '../services/tracker';
 import { fetchWeather, WeatherResponse, registerOrderIntent } from '../services/api';
+import { useWalkingDistance, formatKm, formatWalk } from '../services/distance';
 
 interface JoinDropScreenProps {
   drop: MealDrop;
+  userLocation: UserLocation | null;
   onBack: () => void;
   onOrderJoined: (dropId: string, orderDetails: any) => void;
 }
@@ -27,7 +29,17 @@ export const JoinDropScreen: React.FC<JoinDropScreenProps> = ({
   drop,
   onBack,
   onOrderJoined,
+  userLocation,
 }) => {
+  const distance = useWalkingDistance(drop.id, userLocation);
+  const distanceLabel =
+    distance.status === 'ok'
+      ? `${formatKm(distance.route.distanceKm)} · ${formatWalk(distance.route.walkingMinutes)}`
+      : distance.status === 'loading'
+      ? 'Checking distance…'
+      : distance.status === 'unavailable'
+      ? 'Distance unavailable'
+      : 'Check distance';
   const [quantity, setQuantity] = useState(1);
   const [fulfilment, setFulfilment] = useState<'pickup' | 'delivery'>('pickup');
   const [deliveryBlock, setDeliveryBlock] = useState('');
@@ -281,7 +293,7 @@ export const JoinDropScreen: React.FC<JoinDropScreenProps> = ({
                   </div>
                   <div>
                     <span className="font-bold text-xs text-stone-950 block">Self Pickup</span>
-                    <span className="text-[10px] text-stone-500">{drop.distanceKm} km away</span>
+                    <span className="text-[10px] text-stone-500">{distanceLabel}</span>
                   </div>
                 </div>
                 <span className="text-xs font-extrabold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">

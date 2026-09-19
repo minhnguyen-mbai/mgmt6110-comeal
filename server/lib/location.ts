@@ -1,216 +1,372 @@
+/**
+ * CoMeal SG - OneMap Location Layer (Search + Walking Routing)
+ *
+ * All OneMap calls go through the shared token helper in ./onemapAuth.
+ * Nothing in this file may be reached from the browser without passing through
+ * /api/location/* - the token never leaves the server.
+ *
+ * VERIFIED PROVIDER BEHAVIOUR (checked against live OneMap):
+ *  - Search returns HTTP 200 even when unauthenticated, with an `error` field
+ *    in the body alongside results. HTTP status alone is NOT a success signal.
+ *  - Routing returns HTTP 401 {"message":"Unauthorized"} without a valid token.
+ *  - Route summary fields: route_summary.total_distance (metres),
+ *    route_summary.total_time (seconds).
+ */
 import { safeLog } from './safeLog';
+import { withOneMapToken, hasOneMapCredentials } from './onemapAuth';
 
 const ONEMAP_SEARCH_URL = 'https://www.onemap.gov.sg/api/common/elastic/search';
 const ONEMAP_ROUTE_URL = 'https://www.onemap.gov.sg/api/public/routingsvc/route';
 
-/**
- * Standard known coordinates for key Singapore residential hubs (WGS84)
- * used as reliable instant fallback or anchor references.
- */
-export const KNOWN_SINGAPORE_COORDS: Record<string, { latitude: number; longitude: number }> = {
-  'clementi': { latitude: 1.3151, longitude: 103.7652 },
-  'jurong east': { latitude: 1.3329, longitude: 103.7436 },
-  'jurong west': { latitude: 1.3404, longitude: 103.7050 },
-  'tampines': { latitude: 1.3533, longitude: 103.9452 },
-  'bedok': { latitude: 1.3236, longitude: 103.9273 },
-  'bishan': { latitude: 1.3508, longitude: 103.8485 },
-  'queenstown': { latitude: 1.2942, longitude: 103.8061 },
-  'bugis': { latitude: 1.3006, longitude: 103.8561 },
+const SEARCH_TIMEOUT_MS = 6000;
+const ROUTE_TIMEOUT_MS = 8000;
+
+/** Geocode results are stable; cache generously. */
+const GEOCODE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+/** Walking routes between fixed points are stable too. */
+const ROUTE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+
+export type LocationErrorCode =
+  | 'INVALID_LOCATION_QUERY'
+  | 'LOCATION_NOT_FOUND'
+  | 'LOCATION_PROVIDER_AUTH_ERROR'
+  | 'LOCATION_RATE_LIMITED'
+  | 'LOCATION_PROVIDER_ERROR'
+  | 'LOCATION_TIMEOUT';
+
+export interface NormalizedPlace {
+  address: string;
+  postalCode: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface SearchSuccess {
+  ok: true;
+  results: NormalizedPlace[];
+  source: 'OneMap';
+}
+
+export interface LocationFailure {
+  ok: false;
+  code: LocationErrorCode;
+  message: string;
+}
+
+export interface RouteSuccess {
+  ok: true;
+  routeType: 'walk';
+  distanceMeters: number;
+  distanceKm: number;
+  walkingSeconds: number;
+  walkingMinutes: number;
+  source: 'OneMap';
+}
+
+const USER_MESSAGES: Record<LocationErrorCode, string> = {
+  INVALID_LOCATION_QUERY: 'Enter a Singapore address, postal code or area to check distance.',
+  LOCATION_NOT_FOUND: 'No matching Singapore location found.',
+  LOCATION_PROVIDER_AUTH_ERROR: 'Distance service is not available right now.',
+  LOCATION_RATE_LIMITED: 'Distance service is busy. Try again shortly.',
+  LOCATION_PROVIDER_ERROR: 'Distance service is not available right now.',
+  LOCATION_TIMEOUT: 'Distance service did not respond in time.',
 };
 
+function fail(code: LocationErrorCode): LocationFailure {
+  return { ok: false, code, message: USER_MESSAGES[code] };
+}
+
 /**
- * Haversine formula to compute great-circle distance between two GPS coordinates in kilometres.
+ * OneMap signals auth failure by HTTP 401/403 OR by an `error` string in an
+ * otherwise-200 body. Both must be treated as auth failures.
  */
-export function calculateHaversineDistanceKm(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number
-): number {
-  const R = 6371; // Earth's radius in km
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  const distance = R * c;
-  return Math.round(distance * 10) / 10;
+function looksLikeAuthError(status: number, body: any): boolean {
+  if (status === 401 || status === 403) return true;
+  const msg = String(body?.error ?? body?.message ?? '');
+  if (!msg) return false;
+  return /token|unauthor|authentic|api key|expired/i.test(msg);
 }
 
-export function getDistanceBand(distanceKm: number): string {
-  if (distanceKm < 1) return '<1km';
-  if (distanceKm <= 2) return '1-2km';
-  if (distanceKm <= 5) return '2-5km';
-  return '>5km';
+function mapHttpToCode(status: number): LocationErrorCode {
+  if (status === 429) return 'LOCATION_RATE_LIMITED';
+  if (status === 401 || status === 403) return 'LOCATION_PROVIDER_AUTH_ERROR';
+  return 'LOCATION_PROVIDER_ERROR';
 }
 
-export async function searchOneMap(query: string) {
-  if (!query || query.trim().length === 0) {
-    return { ok: false, code: 'INVALID_REQUEST', message: 'Query string required' };
-  }
+// ───────────────────── authorized provider fetch ───────────────────────────
 
-  const cleanQuery = query.trim();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 4000);
+/**
+ * OneMap's published examples are inconsistent about the Authorization header:
+ * some endpoints are documented with a bare `<token>`, others with
+ * `Bearer <token>`. Rather than hard-code a guess, send the bare token first
+ * and retry once with the Bearer prefix if the provider reports an auth
+ * problem. The winning form is remembered so this costs one extra call at most,
+ * once per process.
+ */
+let preferredAuthScheme: 'bare' | 'bearer' | null = null;
 
-  try {
-    const url = `${ONEMAP_SEARCH_URL}?searchVal=${encodeURIComponent(cleanQuery)}&returnGeom=Y&getAddrDetails=Y`;
-    const headers: Record<string, string> = { Accept: 'application/json' };
-    if (process.env.ONEMAP_API_KEY) {
-      headers['Authorization'] = process.env.ONEMAP_API_KEY;
-    }
-
-    const res = await fetch(url, { signal: controller.signal, headers });
-    if (!res.ok) {
-      throw new Error(`OneMap responded with HTTP ${res.status}`);
-    }
-
-    const data = await res.json();
-    const rawResults = data.results || [];
-
-    const results = rawResults.slice(0, 5).map((item: any) => ({
-      name: item.ADDRESS || item.SEARCHVAL,
-      building: item.BUILDING || item.ROAD_NAME,
-      postal: item.POSTAL || '',
-      latitude: parseFloat(item.LATITUDE),
-      longitude: parseFloat(item.LONGITUDE),
-    }));
-
-    return {
-      ok: true,
-      source: 'onemap_search',
-      totalFound: data.found || results.length,
-      results,
-    };
-  } catch (err: any) {
-    safeLog('warn', 'OneMap search request failed', { query: cleanQuery, error: err?.message });
-    // Safe graceful fallback: return known Singapore coordinates if matched
-    const known = KNOWN_SINGAPORE_COORDS[cleanQuery.toLowerCase()];
-    if (known) {
-      return {
-        ok: true,
-        source: 'local_geographic_directory',
-        results: [
-          {
-            name: `${cleanQuery.toUpperCase()}, Singapore`,
-            building: cleanQuery,
-            postal: '',
-            latitude: known.latitude,
-            longitude: known.longitude,
-          },
-        ],
-      };
-    }
-
-    return {
-      ok: false,
-      code: 'LOCATION_UNAVAILABLE',
-      message: 'Location search is temporarily unavailable.',
-      results: [],
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
+function authHeader(token: string, scheme: 'bare' | 'bearer'): string {
+  return scheme === 'bearer' ? `Bearer ${token}` : token;
 }
 
-async function parseCoords(val: string): Promise<{ latitude: number; longitude: number } | null> {
-  const parts = val.split(',').map((p) => parseFloat(p.trim()));
-  if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
-    return { latitude: parts[0], longitude: parts[1] };
-  }
-
-  // Check known coords
-  const clean = val.toLowerCase().trim();
-  if (KNOWN_SINGAPORE_COORDS[clean]) {
-    return KNOWN_SINGAPORE_COORDS[clean];
-  }
-
-  // Geocode via OneMap search
-  const searchResult = await searchOneMap(val);
-  if (searchResult.ok && searchResult.results && searchResult.results.length > 0) {
-    return {
-      latitude: searchResult.results[0].latitude,
-      longitude: searchResult.results[0].longitude,
-    };
-  }
-
-  return null;
+interface ProviderResponse {
+  status: number;
+  body: any;
+  /** Provider reported an authentication problem under every header form tried. */
+  authError: boolean;
+  timedOut: boolean;
+  networkError: boolean;
 }
 
-export async function calculateDistance(from: string, to: string) {
-  if (!from || !to) {
-    return {
-      ok: false,
-      code: 'INVALID_REQUEST',
-      message: 'Both "from" and "to" parameters are required',
-    };
-  }
+async function fetchOneMapAuthorized(
+  url: string,
+  token: string,
+  timeoutMs: number
+): Promise<ProviderResponse> {
+  const order: Array<'bare' | 'bearer'> =
+    preferredAuthScheme === 'bearer' ? ['bearer', 'bare']
+    : preferredAuthScheme === 'bare' ? ['bare', 'bearer']
+    : ['bare', 'bearer'];
 
-  const fromCoords = await parseCoords(from);
-  const toCoords = await parseCoords(to);
+  let last: ProviderResponse = {
+    status: 0, body: null, authError: true, timedOut: false, networkError: true,
+  };
 
-  if (!fromCoords || !toCoords) {
-    return {
-      ok: false,
-      code: 'LOCATION_UNAVAILABLE',
-      message: "We couldn't calculate distance right now.",
-    };
-  }
-
-  // If ONEMAP_API_KEY is configured, attempt real routing via OneMap Routing Service
-  if (process.env.ONEMAP_API_KEY) {
+  for (const scheme of order) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3500);
-
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const routeUrl = `${ONEMAP_ROUTE_URL}?start=${fromCoords.latitude},${fromCoords.longitude}&end=${toCoords.latitude},${toCoords.longitude}&routeType=walk`;
-      const res = await fetch(routeUrl, {
+      const res = await fetch(url, {
         signal: controller.signal,
-        headers: {
-          Authorization: process.env.ONEMAP_API_KEY,
-        },
+        headers: { Accept: 'application/json', Authorization: authHeader(token, scheme) },
       });
+      const body: any = await res.json().catch(() => null);
+      const authError = looksLikeAuthError(res.status, body);
 
-      if (res.ok) {
-        const routeData = await res.json();
-        // OneMap walk route returns total_distance in meters
-        if (routeData?.route_summary?.total_distance) {
-          const meters = routeData.route_summary.total_distance;
-          const distanceKm = Math.round((meters / 1000) * 10) / 10;
-          return {
-            ok: true,
-            source: 'onemap_routing',
-            distanceKm,
-            distanceBand: getDistanceBand(distanceKm),
-            estimatedTravelTimeMinutes: Math.round(routeData.route_summary.total_time / 60) || undefined,
-          };
-        }
+      if (!authError) {
+        preferredAuthScheme = scheme;
+        return { status: res.status, body, authError: false, timedOut: false, networkError: false };
       }
+      last = { status: res.status, body, authError: true, timedOut: false, networkError: false };
     } catch (err: any) {
-      safeLog('warn', 'OneMap routing service call failed, falling back to Haversine', {
-        error: err?.message,
-      });
+      const aborted = err?.name === 'AbortError';
+      // A timeout or transport failure is not an auth problem; do not burn the
+      // second header attempt on it.
+      return { status: 0, body: null, authError: false, timedOut: aborted, networkError: !aborted };
     } finally {
       clearTimeout(timeout);
     }
   }
 
-  // Geographic Haversine calculation (real coordinate spherical distance)
-  const distanceKm = calculateHaversineDistanceKm(
-    fromCoords.latitude,
-    fromCoords.longitude,
-    toCoords.latitude,
-    toCoords.longitude
-  );
+  return last;
+}
 
-  return {
-    ok: true,
-    source: 'geographic_haversine',
-    distanceKm,
-    distanceBand: getDistanceBand(distanceKm),
-  };
+// ─────────────────────────────── caches ────────────────────────────────────
+
+interface CacheEntry<T> {
+  value: T;
+  expiresAt: number;
+}
+
+const geocodeCache = new Map<string, CacheEntry<NormalizedPlace[]>>();
+const routeCache = new Map<string, CacheEntry<RouteSuccess>>();
+
+function cacheGet<T>(store: Map<string, CacheEntry<T>>, key: string): T | null {
+  const hit = store.get(key);
+  if (!hit) return null;
+  if (Date.now() > hit.expiresAt) {
+    store.delete(key);
+    return null;
+  }
+  return hit.value;
+}
+
+function cacheSet<T>(store: Map<string, CacheEntry<T>>, key: string, value: T, ttl: number): void {
+  store.set(key, { value, expiresAt: Date.now() + ttl });
+}
+
+/** Normalizes an address so equivalent spellings share one cache entry. */
+function normalizeAddressKey(raw: string): string {
+  return raw.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** Route cache key per spec: start + end + routeType. */
+function routeKey(
+  fromLat: number, fromLng: number, toLat: number, toLng: number, routeType: string
+): string {
+  const r = (n: number) => n.toFixed(6);
+  return `${r(fromLat)},${r(fromLng)}|${r(toLat)},${r(toLng)}|${routeType}`;
+}
+
+// ─────────────────────────────── search ────────────────────────────────────
+
+/**
+ * Geocodes a free-text Singapore query via OneMap Search.
+ * Returns every match (capped) - the caller decides, never this layer.
+ */
+export async function searchOneMap(query: string): Promise<SearchSuccess | LocationFailure> {
+  const cleanQuery = (query ?? '').trim();
+  if (cleanQuery.length < 2) return fail('INVALID_LOCATION_QUERY');
+
+  const cacheKey = normalizeAddressKey(cleanQuery);
+  const cached = cacheGet(geocodeCache, cacheKey);
+  if (cached) {
+    return cached.length > 0
+      ? { ok: true, results: cached, source: 'OneMap' }
+      : fail('LOCATION_NOT_FOUND');
+  }
+
+  if (!hasOneMapCredentials()) return fail('LOCATION_PROVIDER_AUTH_ERROR');
+
+  const outcome = await withOneMapToken<SearchSuccess | LocationFailure>(async (token) => {
+    const url =
+      `${ONEMAP_SEARCH_URL}?searchVal=${encodeURIComponent(cleanQuery)}` +
+      `&returnGeom=Y&getAddrDetails=Y&pageNum=1`;
+
+    const resp = await fetchOneMapAuthorized(url, token, SEARCH_TIMEOUT_MS);
+
+    if (resp.timedOut) return { authExpired: false, value: fail('LOCATION_TIMEOUT') };
+    if (resp.networkError) {
+      safeLog('warn', 'OneMap search request failed (transport)');
+      return { authExpired: false, value: fail('LOCATION_PROVIDER_ERROR') };
+    }
+    if (resp.authError) {
+      return { authExpired: true, value: fail('LOCATION_PROVIDER_AUTH_ERROR') };
+    }
+    if (resp.status < 200 || resp.status >= 300) {
+      return { authExpired: false, value: fail(mapHttpToCode(resp.status)) };
+    }
+    // A 200 carrying a non-auth `error` is still a provider failure.
+    if (!resp.body || resp.body.error) {
+      return { authExpired: false, value: fail('LOCATION_PROVIDER_ERROR') };
+    }
+
+    const raw: any[] = Array.isArray(resp.body.results) ? resp.body.results : [];
+    const results: NormalizedPlace[] = raw
+      .slice(0, 8)
+      .map((item) => ({
+        address: String(item.ADDRESS || item.SEARCHVAL || '').trim(),
+        postalCode: item.POSTAL && item.POSTAL !== 'NIL' ? String(item.POSTAL) : '',
+        latitude: parseFloat(item.LATITUDE),
+        longitude: parseFloat(item.LONGITUDE),
+      }))
+      .filter((p) => p.address && Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
+
+    return { authExpired: false, value: { ok: true as const, results, source: 'OneMap' as const } };
+  });
+
+  if (!outcome.ok) return fail('LOCATION_PROVIDER_AUTH_ERROR');
+
+  const value = outcome.value;
+  if (!value.ok) return value;
+
+  cacheSet(geocodeCache, cacheKey, value.results, GEOCODE_TTL_MS);
+  if (value.results.length === 0) return fail('LOCATION_NOT_FOUND');
+  return value;
+}
+
+// ─────────────────────────────── routing ───────────────────────────────────
+
+/**
+ * Real OneMap walking route between two coordinates.
+ *
+ * NOTE: there is deliberately NO Haversine fallback here. A straight-line
+ * figure is not a walking distance, and presenting one as such was the
+ * misleading behaviour this module replaced. On failure the caller surfaces
+ * "Distance unavailable".
+ */
+export async function getWalkingRoute(
+  fromLat: number,
+  fromLng: number,
+  toLat: number,
+  toLng: number
+): Promise<RouteSuccess | LocationFailure> {
+  const coords = [fromLat, fromLng, toLat, toLng];
+  if (coords.some((c) => !Number.isFinite(c))) return fail('INVALID_LOCATION_QUERY');
+
+  const key = routeKey(fromLat, fromLng, toLat, toLng, 'walk');
+  const cached = cacheGet(routeCache, key);
+  if (cached) return cached;
+
+  if (!hasOneMapCredentials()) return fail('LOCATION_PROVIDER_AUTH_ERROR');
+
+  const outcome = await withOneMapToken<RouteSuccess | LocationFailure>(async (token) => {
+    const url =
+      `${ONEMAP_ROUTE_URL}?start=${fromLat},${fromLng}&end=${toLat},${toLng}&routeType=walk`;
+
+    const resp = await fetchOneMapAuthorized(url, token, ROUTE_TIMEOUT_MS);
+
+    if (resp.timedOut) return { authExpired: false, value: fail('LOCATION_TIMEOUT') };
+    if (resp.networkError) {
+      safeLog('warn', 'OneMap routing request failed (transport)');
+      return { authExpired: false, value: fail('LOCATION_PROVIDER_ERROR') };
+    }
+    if (resp.authError) {
+      return { authExpired: true, value: fail('LOCATION_PROVIDER_AUTH_ERROR') };
+    }
+    if (resp.status < 200 || resp.status >= 300) {
+      return { authExpired: false, value: fail(mapHttpToCode(resp.status)) };
+    }
+
+    const summary = resp.body?.route_summary;
+    const meters = Number(summary?.total_distance);
+    const seconds = Number(summary?.total_time);
+    if (!summary || !Number.isFinite(meters) || !Number.isFinite(seconds)) {
+      safeLog('warn', 'OneMap route response missing route_summary fields');
+      return { authExpired: false, value: fail('LOCATION_PROVIDER_ERROR') };
+    }
+
+    const success: RouteSuccess = {
+      ok: true,
+      routeType: 'walk',
+      distanceMeters: Math.round(meters),
+      distanceKm: Math.round((meters / 1000) * 100) / 100,
+      walkingSeconds: Math.round(seconds),
+      walkingMinutes: Math.ceil(seconds / 60),
+      source: 'OneMap',
+    };
+    return { authExpired: false, value: success };
+  });
+
+  if (!outcome.ok) return fail('LOCATION_PROVIDER_AUTH_ERROR');
+  const value = outcome.value;
+  if (value.ok) cacheSet(routeCache, key, value, ROUTE_TTL_MS);
+  return value;
+}
+
+// ──────────────────────── privacy-safe distance band ───────────────────────
+
+/**
+ * Coarse band for behavioural analytics. This is the ONLY distance-derived
+ * value permitted into event storage - never coordinates or addresses.
+ */
+export function getDistanceBand(distanceKm: number): string {
+  if (distanceKm < 1) return '<1km';
+  if (distanceKm <= 2) return '1-2km';
+  if (distanceKm <= 5) return '2-5km';
+  return '5km+';
+}
+
+/**
+ * INTERNAL DIAGNOSTIC ONLY - straight-line great-circle distance.
+ *
+ * NOT a walking distance and MUST NOT be shown to users or returned from any
+ * route as though it came from OneMap. Retained for offline sanity checks.
+ */
+export function haversineStraightLineKm_internalDiagnosticOnly(
+  lat1: number, lon1: number, lat2: number, lon2: number
+): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 10) / 10;
+}
+
+/** Test/maintenance helper. */
+export function clearLocationCaches(): void {
+  geocodeCache.clear();
+  routeCache.clear();
 }

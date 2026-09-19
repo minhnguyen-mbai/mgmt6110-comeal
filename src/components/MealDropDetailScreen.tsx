@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MealDrop } from '../types';
+import { MealDrop, UserLocation } from '../types';
 import {
   ArrowLeft,
   MapPin,
@@ -23,9 +23,11 @@ import {
 } from 'lucide-react';
 import { trackEvent } from '../services/tracker';
 import { fetchWeather, WeatherResponse } from '../services/api';
+import { useWalkingDistance, formatKm, formatWalk } from '../services/distance';
 
 interface MealDropDetailScreenProps {
   drop: MealDrop;
+  userLocation: UserLocation | null;
   onBack: () => void;
   onJoinDrop: (dropId: string) => void;
   onAbandon: (dropId: string) => void;
@@ -36,7 +38,19 @@ export const MealDropDetailScreen: React.FC<MealDropDetailScreenProps> = ({
   onBack,
   onJoinDrop,
   onAbandon,
+  userLocation,
 }) => {
+  const distance = useWalkingDistance(drop.id, userLocation);
+
+  /** "1.2 km · 16 min walk" once a real route exists, otherwise a neutral state. */
+  const distanceLabel =
+    distance.status === 'ok'
+      ? `${formatKm(distance.route.distanceKm)} · ${formatWalk(distance.route.walkingMinutes)}`
+      : distance.status === 'loading'
+      ? 'Checking distance…'
+      : distance.status === 'unavailable'
+      ? 'Distance unavailable'
+      : 'Check distance';
   const [showAllReviews, setShowAllReviews] = useState(false);
   const [showIngredients, setShowIngredients] = useState(false);
   const [showCookStory, setShowCookStory] = useState(false);
@@ -154,7 +168,7 @@ export const MealDropDetailScreen: React.FC<MealDropDetailScreenProps> = ({
 
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-semibold text-stone-600 bg-stone-100 px-2 py-0.5 rounded-full border border-stone-200">
-            {drop.neighbourhood} • {drop.distanceKm} km away
+            {drop.neighbourhood} · {distanceLabel}
           </span>
           <span className="text-[10px] font-medium text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
             Demo Batch
@@ -230,7 +244,7 @@ export const MealDropDetailScreen: React.FC<MealDropDetailScreenProps> = ({
 
                 <p className="text-xs text-stone-500 flex items-center gap-1">
                   <MapPin className="w-3 h-3 text-orange-600" />
-                  <span>{drop.cookAddressShort} • {drop.distanceKm} km away</span>
+                  <span>{drop.cookAddressShort} · {distanceLabel}</span>
                 </p>
               </div>
             </div>
@@ -400,7 +414,7 @@ export const MealDropDetailScreen: React.FC<MealDropDetailScreenProps> = ({
                   <span>Window: <strong>{drop.pickupWindow}</strong></span>
                 </span>
                 <span>•</span>
-                <span>{drop.distanceKm} km away</span>
+                <span>{distanceLabel}</span>
               </div>
             </div>
 

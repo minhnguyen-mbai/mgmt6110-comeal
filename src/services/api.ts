@@ -18,32 +18,41 @@ export interface WeatherResponse {
   message?: string;
 }
 
+/** Normalized OneMap walking-route response from /api/location/distance. */
 export interface DistanceResponse {
   ok: boolean;
-  source?: string;
+  routeType?: 'walk';
+  distanceMeters?: number;
   distanceKm?: number;
-  distanceBand?: string;
+  walkingSeconds?: number;
+  walkingMinutes?: number;
+  source?: 'OneMap';
   code?: string;
   message?: string;
 }
 
+/** Normalized OneMap search response from /api/location/search. */
 export interface LocationSearchResponse {
   ok: boolean;
-  source?: string;
   results: Array<{
-    name: string;
-    building: string;
-    postal: string;
+    address: string;
+    postalCode: string;
     latitude: number;
     longitude: number;
   }>;
+  source?: 'OneMap';
+  code?: string;
+  message?: string;
 }
 
 export interface HealthResponse {
   service: string;
   ok: boolean;
   weatherProviderReachable: boolean;
+  /** Credentials are present. Does NOT mean the provider accepted them. */
   locationProviderConfigured: boolean;
+  /** A real OneMap token was obtained. Only this justifies a "connected" label. */
+  locationProviderAuthenticated: boolean;
   storageConfigured: boolean;
   storageMode: string;
   checkedAt: string;
@@ -84,28 +93,42 @@ export async function fetchWeather(area?: string): Promise<WeatherResponse> {
   }
 }
 
-export async function fetchDistance(from: string, to: string): Promise<DistanceResponse> {
+/**
+ * Real OneMap walking route. Destination is given as a mealBatchId so cook
+ * coordinates stay on the server. There is no straight-line fallback: a failure
+ * here means the UI shows "Distance unavailable".
+ */
+export async function fetchWalkingDistance(
+  fromLat: number,
+  fromLng: number,
+  mealBatchId: string
+): Promise<DistanceResponse> {
   try {
-    const url = `/api/location/distance?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+    const url =
+      `/api/location/distance?fromLat=${encodeURIComponent(fromLat)}` +
+      `&fromLng=${encodeURIComponent(fromLng)}` +
+      `&mealBatchId=${encodeURIComponent(mealBatchId)}`;
     const res = await fetch(url);
-    if (!res.ok) {
-      return { ok: false, code: 'LOCATION_UNAVAILABLE', message: "We couldn't calculate distance right now." };
-    }
-    return await res.json();
+    const data = await res.json().catch(() => null);
+    if (!data) return { ok: false, code: 'LOCATION_PROVIDER_ERROR' };
+    return data;
   } catch {
-    return { ok: false, code: 'LOCATION_UNAVAILABLE', message: "We couldn't calculate distance right now." };
+    return { ok: false, code: 'LOCATION_PROVIDER_ERROR' };
   }
 }
 
+/**
+ * Address / postal / area search via OneMap. Returns every match so the caller
+ * can disambiguate - this never picks a result on the user's behalf.
+ */
 export async function searchLocation(query: string): Promise<LocationSearchResponse> {
   try {
     const res = await fetch(`/api/location/search?query=${encodeURIComponent(query)}`);
-    if (!res.ok) {
-      return { ok: false, results: [] };
-    }
-    return await res.json();
+    const data = await res.json().catch(() => null);
+    if (!data) return { ok: false, results: [], code: 'LOCATION_PROVIDER_ERROR' };
+    return { ...data, results: Array.isArray(data.results) ? data.results : [] };
   } catch {
-    return { ok: false, results: [] };
+    return { ok: false, results: [], code: 'LOCATION_PROVIDER_ERROR' };
   }
 }
 

@@ -1,3 +1,11 @@
+import dotenv from 'dotenv';
+
+// Load local secrets before anything reads process.env.
+// .env.local wins over .env; dotenv never overrides variables already set in
+// the real environment, so deployment config still takes precedence.
+dotenv.config({ path: '.env.local' });
+dotenv.config();
+
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';

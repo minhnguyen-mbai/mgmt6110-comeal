@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { TrackingEvent, QualitativeFeedback } from '../types';
 import {
   X,
@@ -14,8 +14,14 @@ import {
   Copy,
   ChevronRight,
   TrendingUp,
+  Server,
+  CloudRain,
+  MapPin,
+  Database,
+  RefreshCw,
 } from 'lucide-react';
 import { clearTrackingData } from '../services/tracker';
+import { fetchHealth, HealthResponse } from '../services/api';
 
 interface AnalyticsDrawerProps {
   isOpen: boolean;
@@ -32,9 +38,37 @@ export const AnalyticsDrawer: React.FC<AnalyticsDrawerProps> = ({
   feedbackList,
   onDataCleared,
 }) => {
-  const [activeTab, setActiveTab] = useState<'events' | 'hypothesis' | 'feedback'>('hypothesis');
+  const [activeTab, setActiveTab] = useState<'events' | 'hypothesis' | 'feedback' | 'backend'>('hypothesis');
   const [selectedEventType, setSelectedEventType] = useState<string>('all');
   const [copied, setCopied] = useState(false);
+  const [healthData, setHealthData] = useState<HealthResponse | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [serverEventsCount, setServerEventsCount] = useState<number | null>(null);
+  const [serverCommentsCount, setServerCommentsCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      loadHealthAndBackendData();
+    }
+  }, [isOpen]);
+
+  const loadHealthAndBackendData = async () => {
+    setHealthLoading(true);
+    try {
+      const h = await fetchHealth();
+      setHealthData(h);
+      const evRes = await fetch('/api/events?limit=1').then((r) => r.json()).catch(() => null);
+      if (evRes && typeof evRes.total === 'number') {
+        setServerEventsCount(evRes.total);
+      }
+      const cmRes = await fetch('/api/comments?limit=1').then((r) => r.json()).catch(() => null);
+      if (cmRes && typeof cmRes.total === 'number') {
+        setServerCommentsCount(cmRes.total);
+      }
+    } finally {
+      setHealthLoading(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -173,6 +207,18 @@ export const AnalyticsDrawer: React.FC<AnalyticsDrawerProps> = ({
             <span className="bg-stone-200 text-stone-800 text-[10px] px-1.5 py-0.2 rounded-full">
               {feedbackList.length}
             </span>
+          </button>
+          <button
+            onClick={() => setActiveTab('backend')}
+            id="tab-backend-audit"
+            className={`px-3 py-2 border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'backend'
+                ? 'border-orange-600 text-orange-600'
+                : 'border-transparent text-stone-600 hover:text-stone-900'
+            }`}
+          >
+            <Server className="w-3.5 h-3.5" />
+            <span>Backend & Data</span>
           </button>
         </div>
 
@@ -372,6 +418,132 @@ export const AnalyticsDrawer: React.FC<AnalyticsDrawerProps> = ({
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {activeTab === 'backend' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-stone-900 text-sm">System & Backend Health</h3>
+                  <p className="text-xs text-stone-500">Real-time status of CoMeal PS3 data services</p>
+                </div>
+                <button
+                  onClick={loadHealthAndBackendData}
+                  disabled={healthLoading}
+                  className="flex items-center gap-1 text-xs font-semibold text-stone-700 hover:text-stone-950 bg-stone-100 hover:bg-stone-200 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${healthLoading ? 'animate-spin' : ''}`} />
+                  <span>Refresh</span>
+                </button>
+              </div>
+
+              {/* Status cards */}
+              <div className="space-y-2.5">
+                <div className="bg-stone-50 rounded-xl p-3 border border-stone-200 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-sky-100 text-sky-700 flex items-center justify-center">
+                      <CloudRain className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-stone-900 text-xs">Real Singapore Weather</p>
+                      <p className="text-[11px] text-stone-500">data.gov.sg (NEA 2-Hour Forecast)</p>
+                    </div>
+                  </div>
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      healthData?.weatherProviderReachable
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-amber-100 text-amber-800'
+                    }`}
+                  >
+                    {healthData?.weatherProviderReachable ? 'REACHABLE' : 'UNREACHABLE (SAFE FALLBACK)'}
+                  </span>
+                </div>
+
+                <div className="bg-stone-50 rounded-xl p-3 border border-stone-200 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                      <MapPin className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-stone-900 text-xs">Location & Distance Layer</p>
+                      <p className="text-[11px] text-stone-500">
+                        {healthData?.locationProviderAuthenticated
+                          ? 'OneMap search + walking routing'
+                          : 'Walking distance unavailable'}
+                      </p>
+                    </div>
+                  </div>
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      healthData?.locationProviderAuthenticated
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-stone-200 text-stone-700'
+                    }`}
+                  >
+                    {/* Reflects a verified OneMap token, not merely configuration. */}
+                    {healthData?.locationProviderAuthenticated ? 'ONEMAP CONNECTED' : 'ONEMAP UNAVAILABLE'}
+                  </span>
+                </div>
+
+                <div className="bg-stone-50 rounded-xl p-3 border border-stone-200 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
+                      <Database className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-stone-900 text-xs">Server Persistent Storage</p>
+                      <p className="text-[11px] text-stone-500">
+                        File-based JSON storage (/data/events.json, /data/comments.json)
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
+                    {healthData?.storageConfigured ? 'PERSISTING' : 'READY'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Records audit */}
+              <div className="bg-white rounded-xl p-3.5 border border-stone-200 space-y-2">
+                <h4 className="font-bold text-xs text-stone-900 uppercase tracking-wider">
+                  Backend Persistent Ledger Count
+                </h4>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="bg-stone-50 rounded-lg p-2.5 border border-stone-100">
+                    <p className="text-[11px] text-stone-500">Logged Events on Server</p>
+                    <p className="text-base font-bold text-stone-900 font-mono">
+                      {serverEventsCount !== null ? serverEventsCount : events.length}
+                    </p>
+                  </div>
+                  <div className="bg-stone-50 rounded-lg p-2.5 border border-stone-100">
+                    <p className="text-[11px] text-stone-500">Submitted Feedback / Comments</p>
+                    <p className="text-base font-bold text-stone-900 font-mono">
+                      {serverCommentsCount !== null ? serverCommentsCount : feedbackList.length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Data transparency audit notice */}
+              <div className="bg-stone-100 rounded-xl p-3 text-[11px] text-stone-600 space-y-1.5 border border-stone-200">
+                <p className="font-bold text-stone-900">PS3 Data Source Transparency</p>
+                <ul className="list-disc pl-4 space-y-0.5 text-stone-600">
+                  <li><strong>Real External:</strong> Singapore 2-hour weather forecast from NEA / data.gov.sg API.</li>
+                  <li>
+                    <strong>Real External:</strong> Address search and walking distance/time from the
+                    OneMap Singapore API{' '}
+                    {healthData
+                      ? healthData.locationProviderAuthenticated
+                        ? '(connected).'
+                        : '(currently unavailable — distances are not shown).'
+                      : '.'}
+                  </li>
+                  <li><strong>Marketplace Mock:</strong> Home cooks, menu items, ratings, and batch portions are curated prototype demo data.</li>
+                  <li><strong>Privacy:</strong> No personal coordinates or API keys are stored in client logs.</li>
+                </ul>
+              </div>
             </div>
           )}
         </div>

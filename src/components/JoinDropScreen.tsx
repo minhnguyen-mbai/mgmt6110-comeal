@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MealDrop } from '../types';
+import { MealDrop, UserLocation } from '../types';
 import {
   ArrowLeft,
   ShoppingBag,
@@ -14,10 +14,13 @@ import {
   HelpCircle,
   Building,
 } from 'lucide-react';
-import { trackEvent } from '../services/tracker';
+import { trackEvent, getSessionId } from '../services/tracker';
+import { fetchWeather, WeatherResponse, registerOrderIntent } from '../services/api';
+import { useWalkingDistance, formatKm, formatWalk } from '../services/distance';
 
 interface JoinDropScreenProps {
   drop: MealDrop;
+  userLocation: UserLocation | null;
   onBack: () => void;
   onOrderJoined: (dropId: string, orderDetails: any) => void;
 }
@@ -26,12 +29,40 @@ export const JoinDropScreen: React.FC<JoinDropScreenProps> = ({
   drop,
   onBack,
   onOrderJoined,
+  userLocation,
 }) => {
+  const distance = useWalkingDistance(drop.id, userLocation);
+  const distanceLabel =
+    distance.status === 'ok'
+      ? `${formatKm(distance.route.distanceKm)} · ${formatWalk(distance.route.walkingMinutes)}`
+      : distance.status === 'loading'
+      ? 'Checking distance…'
+      : distance.status === 'unavailable'
+      ? 'Distance unavailable'
+      : 'Check distance';
   const [quantity, setQuantity] = useState(1);
   const [fulfilment, setFulfilment] = useState<'pickup' | 'delivery'>('pickup');
   const [deliveryBlock, setDeliveryBlock] = useState('');
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [weatherData, setWeatherData] = useState<WeatherResponse | null>(null);
+  const [weatherFailed, setWeatherFailed] = useState(false);
+
+  // Fetch real-time Singapore 2-Hour forecast for this neighbourhood
+  useEffect(() => {
+    fetchWeather(drop.neighbourhood)
+      .then((res) => {
+        if (res && res.ok !== false) {
+          setWeatherData(res);
+          setWeatherFailed(false);
+        } else {
+          setWeatherFailed(true);
+        }
+      })
+      .catch(() => {
+        setWeatherFailed(true);
+      });
+  }, [drop.neighbourhood]);
 
   // Delivery cluster progress check
   const clusterRemaining = Math.max(0, drop.deliveryClusterThreshold - drop.deliveryClusterHouseholdsJoined);
@@ -95,6 +126,15 @@ export const JoinDropScreen: React.FC<JoinDropScreenProps> = ({
       deliveryBlock: fulfilment === 'delivery' ? deliveryBlock : undefined,
       notes,
     };
+
+    // Send order intent to backend API
+    registerOrderIntent({
+      mealBatchId: drop.id,
+      quantity,
+      fulfilmentType: fulfilment,
+      neighbourhood: drop.neighbourhood,
+      sessionId: getSessionId(),
+    }).catch((err) => console.debug('Order intent registered locally', err));
 
     trackEvent('order_joined', {
       mealDropId: drop.id,
@@ -190,11 +230,34 @@ export const JoinDropScreen: React.FC<JoinDropScreenProps> = ({
         </div>
 
         {/* Weather Context Note (Preserves User Agency) */}
-        <div className="bg-sky-50/80 border border-sky-200/70 rounded-xl p-2.5 flex items-start gap-2 text-xs text-sky-950">
+        <div className="bg-sky-50/80 border border-sky-200/70 rounded-xl p-2.5 flex items-start gap-2.5 text-xs text-sky-950">
           <CloudRain className="w-4 h-4 text-sky-600 flex-shrink-0 mt-0.5" />
-          <p className="text-[11px] text-sky-900 leading-snug">
-            {drop.weatherContext || 'Evening showers expected. Pickup is still available; delivery may be more convenient tonight.'}
-          </p>
+          <div className="space-y-0.5 flex-1">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-sky-900">
+                {drop.neighbourhood} weather
+              </span>
+              <span className="text-[9px] text-sky-700 bg-sky-200/60 px-1 rounded font-medium">
+                NEA 2-Hr
+              </span>
+            </div>
+            {weatherFailed || !weatherData || weatherData.ok === false ? (
+              <p className="text-[11px] text-sky-900 leading-snug">
+                Weather context is temporarily unavailable.
+              </p>
+            ) : (
+              <div className="space-y-0.5">
+                <div className="text-[11px] font-semibold text-sky-950">
+                  {weatherData.forecast}
+                </div>
+                {weatherData.contextualNote && (
+                  <p className="text-[11px] text-sky-900 leading-snug">
+                    {weatherData.contextualNote}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Fulfilment Choice: "How would you like to get your meal?" */}
@@ -230,7 +293,7 @@ export const JoinDropScreen: React.FC<JoinDropScreenProps> = ({
                   </div>
                   <div>
                     <span className="font-bold text-xs text-stone-950 block">Self Pickup</span>
-                    <span className="text-[10px] text-stone-500">{drop.distanceKm} km away</span>
+                    <span className="text-[10px] text-stone-500">{distanceLabel}</span>
                   </div>
                 </div>
                 <span className="text-xs font-extrabold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">

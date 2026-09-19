@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { MealDrop, ScreenState, DayBucket, TrackingEvent, QualitativeFeedback } from './types';
+import React, { useState, useEffect, useRef } from 'react';
+import { MealDrop, ScreenState, DayBucket, TrackingEvent, QualitativeFeedback, UserLocation } from './types';
 import { MOCK_MEAL_DROPS } from './data/mockDrops';
 import { Navbar } from './components/Navbar';
 import { DiscoverScreen } from './components/DiscoverScreen';
@@ -19,6 +19,13 @@ export default function App() {
   const [drops, setDrops] = useState<MealDrop[]>(MOCK_MEAL_DROPS);
   const [screenState, setScreenState] = useState<ScreenState>({ screen: 'discover' });
   const [selectedLocation, setSelectedLocation] = useState<string>('All');
+
+  /**
+   * The location the user searched for and selected, used for real OneMap
+   * walking routes. Session-only: never persisted and never sent to analytics
+   * (the server strips precise location from events regardless).
+   */
+  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [selectedDay, setSelectedDay] = useState<DayBucket | 'all'>('all');
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
 
@@ -26,16 +33,21 @@ export default function App() {
   const [events, setEvents] = useState<TrackingEvent[]>([]);
   const [feedbackList, setFeedbackList] = useState<QualitativeFeedback[]>([]);
 
+  const hasTrackedInitialDiscover = useRef(false);
+
   useEffect(() => {
     // Initial events load
     setEvents(getStoredEvents());
     setFeedbackList(getStoredFeedback());
 
-    // Track initial discover view
-    trackEvent('discover_viewed', {
-      location: 'All',
-      metadata: { initialLoad: true, totalDropsAvailable: MOCK_MEAL_DROPS.length },
-    });
+    // Track initial discover view once
+    if (!hasTrackedInitialDiscover.current) {
+      hasTrackedInitialDiscover.current = true;
+      trackEvent('discover_viewed', {
+        location: 'All',
+        metadata: { initialLoad: true, totalDropsAvailable: MOCK_MEAL_DROPS.length },
+      });
+    }
 
     const unsubscribeEvents = subscribeToEvents((newEvent) => {
       setEvents((prev) => [newEvent, ...prev]);
@@ -126,6 +138,8 @@ export default function App() {
               onLocationChange={setSelectedLocation}
               selectedDay={selectedDay}
               onDayChange={setSelectedDay}
+              userLocation={userLocation}
+              onUserLocationChange={setUserLocation}
             />
           )}
 
@@ -135,6 +149,7 @@ export default function App() {
               onBack={handleBackToDiscover}
               onJoinDrop={handleJoinDrop}
               onAbandon={handleAbandonDetail}
+              userLocation={userLocation}
             />
           )}
 
@@ -143,6 +158,7 @@ export default function App() {
               drop={activeDrop}
               onBack={() => setScreenState({ screen: 'detail', dropId: activeDrop.id })}
               onOrderJoined={handleOrderJoined}
+              userLocation={userLocation}
             />
           )}
 

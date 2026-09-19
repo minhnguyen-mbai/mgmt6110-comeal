@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MealDrop } from '../types';
+import { MealDrop, UserLocation } from '../types';
 import {
   ArrowLeft,
   MapPin,
@@ -22,9 +22,12 @@ import {
   Repeat,
 } from 'lucide-react';
 import { trackEvent } from '../services/tracker';
+import { fetchWeather, WeatherResponse } from '../services/api';
+import { useWalkingDistance, formatKm, formatWalk } from '../services/distance';
 
 interface MealDropDetailScreenProps {
   drop: MealDrop;
+  userLocation: UserLocation | null;
   onBack: () => void;
   onJoinDrop: (dropId: string) => void;
   onAbandon: (dropId: string) => void;
@@ -35,11 +38,30 @@ export const MealDropDetailScreen: React.FC<MealDropDetailScreenProps> = ({
   onBack,
   onJoinDrop,
   onAbandon,
+  userLocation,
 }) => {
+  const distance = useWalkingDistance(drop.id, userLocation);
+
+  /** "1.2 km · 16 min walk" once a real route exists, otherwise a neutral state. */
+  const distanceLabel =
+    distance.status === 'ok'
+      ? `${formatKm(distance.route.distanceKm)} · ${formatWalk(distance.route.walkingMinutes)}`
+      : distance.status === 'loading'
+      ? 'Checking distance…'
+      : distance.status === 'unavailable'
+      ? 'Distance unavailable'
+      : 'Check distance';
   const [showAllReviews, setShowAllReviews] = useState(false);
   const [showIngredients, setShowIngredients] = useState(false);
   const [showCookStory, setShowCookStory] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+  const [weatherData, setWeatherData] = useState<WeatherResponse | null>(null);
+
+  useEffect(() => {
+    fetchWeather(drop.neighbourhood).then((res) => {
+      setWeatherData(res);
+    });
+  }, [drop.neighbourhood]);
 
   useEffect(() => {
     trackEvent('meal_drop_viewed', {
@@ -146,7 +168,7 @@ export const MealDropDetailScreen: React.FC<MealDropDetailScreenProps> = ({
 
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-semibold text-stone-600 bg-stone-100 px-2 py-0.5 rounded-full border border-stone-200">
-            {drop.neighbourhood} • {drop.distanceKm} km away
+            {drop.neighbourhood} · {distanceLabel}
           </span>
           <span className="text-[10px] font-medium text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
             Demo Batch
@@ -222,7 +244,7 @@ export const MealDropDetailScreen: React.FC<MealDropDetailScreenProps> = ({
 
                 <p className="text-xs text-stone-500 flex items-center gap-1">
                   <MapPin className="w-3 h-3 text-orange-600" />
-                  <span>{drop.cookAddressShort} • {drop.distanceKm} km away</span>
+                  <span>{drop.cookAddressShort} · {distanceLabel}</span>
                 </p>
               </div>
             </div>
@@ -295,7 +317,19 @@ export const MealDropDetailScreen: React.FC<MealDropDetailScreenProps> = ({
           </p>
 
           {/* Batch Progress Bar */}
-          <div className="bg-stone-50 rounded-xl p-3 border border-stone-200/80 space-y-2">
+          <div
+            onClick={() => {
+              trackEvent('group_progress_clicked', {
+                mealDropId: drop.id,
+                metadata: {
+                  portionsJoined: drop.portionsJoined,
+                  totalPortions: drop.totalPortions,
+                  threshold: drop.groupOrderThreshold,
+                },
+              });
+            }}
+            className="bg-stone-50 rounded-xl p-3 border border-stone-200/80 space-y-2 cursor-pointer hover:border-orange-200 transition-colors"
+          >
             <div className="flex items-center justify-between text-xs">
               <span className="font-bold text-stone-900 flex items-center gap-1.5">
                 <Users className="w-3.5 h-3.5 text-orange-600" />
@@ -318,6 +352,37 @@ export const MealDropDetailScreen: React.FC<MealDropDetailScreenProps> = ({
             </div>
           </div>
         </section>
+
+        {/* Real Singapore Weather Context Card */}
+        {weatherData && (
+          <section className="bg-sky-50/80 border border-sky-200/80 rounded-2xl p-3.5 space-y-1.5 shadow-2xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-sky-950 font-bold text-xs">
+                <CloudRain className="w-4 h-4 text-sky-600 flex-shrink-0" />
+                <span>{drop.neighbourhood} weather</span>
+              </div>
+              <span className="text-[9px] text-sky-700 bg-sky-200/60 px-1.5 py-0.5 rounded font-medium">
+                NEA 2-Hr
+              </span>
+            </div>
+            {weatherData.ok === false ? (
+              <p className="text-[11px] text-sky-900 leading-snug">
+                Weather context is temporarily unavailable.
+              </p>
+            ) : (
+              <div className="space-y-0.5">
+                <div className="text-xs font-semibold text-sky-950">
+                  {weatherData.forecast}
+                </div>
+                {weatherData.contextualNote && (
+                  <p className="text-[11px] text-sky-900 leading-snug">
+                    {weatherData.contextualNote}
+                  </p>
+                )}
+              </div>
+            )}
+          </section>
+        )}
 
         {/* 3. FULFILMENT (Clear split: Option A Pickup vs Option B Shared Delivery) */}
         <section className="bg-white rounded-2xl p-4 border border-stone-200 space-y-3 shadow-2xs">
@@ -349,7 +414,7 @@ export const MealDropDetailScreen: React.FC<MealDropDetailScreenProps> = ({
                   <span>Window: <strong>{drop.pickupWindow}</strong></span>
                 </span>
                 <span>•</span>
-                <span>{drop.distanceKm} km away</span>
+                <span>{distanceLabel}</span>
               </div>
             </div>
 

@@ -1,19 +1,97 @@
-import { MealDrop } from '../types';
-import bunBoHueImage from '../assets/images/bun_bo_hue_home_1789610805825.jpg';
-import comTamImage from '../assets/images/com_tam_home_1789610820591.jpg';
+/**
+ * CoMeal SG - Prototype Marketplace Data Layer
+ * Note: Home cooks, ratings, reviews, and batch counts represent curated prototype data
+ * for behavioral instrumentation. Not real operating sellers.
+ *
+ * CATALOG SOURCE OF TRUTH:
+ * drop_001 - drop_006 are reconciled to the approved frontend catalog in
+ * src/data/mockDrops.ts. Ids, cooks, dishes, neighbourhoods, pricing, capacity,
+ * delivery-cluster values, pickup details and timings must stay in step with
+ * that file. Server-only additions are cookId and the field names
+ * batchCapacity / portionsBooked / repeatCustomerRate, which correspond to the
+ * frontend's totalPortions / portionsJoined / repeatCustomersPct.
+ *
+ * Frontend drop_001 and drop_003 render bundled local images; the server bundle
+ * cannot import those assets, so this file carries absolute URLs for the same
+ * dishes instead.
+ *
+ * TODO (weather phase): "Bugis" is an approved marketplace neighbourhood but is
+ * NOT one of the NEA 2-hour forecast areas. It needs an explicit supported
+ * forecast-area mapping later. Marketplace neighbourhood and weather forecast
+ * area are separate concepts - do not rename the customer-facing neighbourhood
+ * to satisfy the weather provider.
+ */
 
-export const MOCK_MEAL_DROPS: MealDrop[] = [
+export interface MarketplaceBatch {
+  id: string;
+  cookId: string;
+  cookName: string;
+  cookAvatar: string;
+  cookBio: string;
+  cookAddressShort: string;
+  completedBatches: number;
+  cookingSchedule: string;
+  repeatCustomerRate: number; // percentage
+  mealName: string;
+  mealImage: string;
+  shortDescription: string;
+  fullDescription: string;
+  cuisine: string;
+  pricePerPortion: number;
+  neighbourhood: string;
+  distanceKm: number;
+  pickupLocation: string;
+  pickupWindow: string;
+  deliveryArea: string;
+  deliveryWindow: string;
+  deliveryClusterName: string;
+  deliveryClusterHouseholdsJoined: number;
+  deliveryClusterThreshold: number;
+  dayBucket: 'tonight' | 'tomorrow' | 'weekend';
+  orderCutoffTime: string;
+  batchCapacity: number;
+  portionsBooked: number;
+  groupOrderThreshold: number;
+  currentDeliveryFee: number;
+  unlockedDeliveryFee: number;
+  rating: number;
+  reviewCount: number;
+  featuredReview: {
+    author: string;
+    residentArea: string;
+    orderCount: number;
+    rating: number;
+    comment: string;
+  };
+  neighbourPhotos: string[];
+  reviews: Array<{
+    id: string;
+    author: string;
+    avatar: string;
+    rating: number;
+    date: string;
+    residentArea?: string;
+    orderCount?: number;
+    comment: string;
+  }>;
+  allergens: string[];
+  ingredients: string[];
+  status: 'OPEN' | 'ALMOST_FULL' | 'UNLOCKED' | 'SOLD_OUT' | 'CLOSED';
+}
+
+export const INITIAL_BATCHES: MarketplaceBatch[] = [
   {
     id: 'drop_001',
+    cookId: 'cook_linh_01',
     cookName: "Linh's Kitchen",
     cookAvatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80',
     cookBio: 'Saigonese mother living in Clementi for 8 years. Cooks authentic Vietnamese family comfort staples using fresh market herbs, slow-simmered broths, and heirloom recipes.',
     cookAddressShort: 'Blk 318 Clementi Ave 4',
     completedBatches: 24,
     cookingSchedule: 'Vietnamese family meals every Thu & Sun',
-    repeatCustomersPct: 84,
+    repeatCustomerRate: 84,
     mealName: 'Bún Bò Huế (Spicy Beef Noodle Soup)',
-    mealImage: bunBoHueImage,
+    mealImage: 'https://images.unsplash.com/photo-1582878826629-29b7ad1cdc43?auto=format&fit=crop&w=800&q=80',
     shortDescription: 'Slow-cooked spicy beef noodle soup with tender beef, herbs and chilli.',
     fullDescription: 'Slow-cooked spicy beef noodle soup with tender beef shank, lemongrass, aromatics, herbs, fresh scallions, and sliced chilli. Prepared in a single fresh morning batch with thick round rice noodles and slow-simmered bone broth.',
     cuisine: 'Vietnamese Home-Style',
@@ -29,8 +107,8 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
     deliveryClusterThreshold: 5,
     dayBucket: 'tonight',
     orderCutoffTime: '4:30 PM (Today)',
-    totalPortions: 20,
-    portionsJoined: 16,
+    batchCapacity: 20,
+    portionsBooked: 16,
     groupOrderThreshold: 20,
     currentDeliveryFee: 4.00,
     unlockedDeliveryFee: 2.00,
@@ -40,11 +118,11 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
       author: 'Marcus Tan',
       residentArea: 'Clementi Ave 4 resident',
       orderCount: 6,
-      rating: 5,
+      rating: 5.0,
       comment: 'Tender beef shank and authentic lemongrass broth with just the right spice kick. Picked up at the void deck in 2 minutes, warm and perfectly packaged.',
     },
     neighbourPhotos: [
-      bunBoHueImage,
+      'https://images.unsplash.com/photo-1582878826629-29b7ad1cdc43?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?auto=format&fit=crop&w=400&q=80',
       'https://images.unsplash.com/photo-1617093727343-374698b1b08d?auto=format&fit=crop&w=400&q=80',
     ],
@@ -53,7 +131,7 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
         id: 'rev_1',
         author: 'Marcus Tan',
         avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&q=80',
-        rating: 5,
+        rating: 5.0,
         date: 'Last Thursday',
         residentArea: 'Blk 320 Clementi',
         orderCount: 6,
@@ -63,7 +141,7 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
         id: 'rev_2',
         author: 'Eileen Wu',
         avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=100&q=80',
-        rating: 5,
+        rating: 5.0,
         date: '2 weeks ago',
         residentArea: 'Sunset Way',
         orderCount: 3,
@@ -80,7 +158,11 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
         comment: 'Great value compared to typical mall restaurants. The broth has real depth from hours of simmering.',
       },
     ],
-    allergens: ['Beef', 'Fish Sauce', 'Shrimp paste trace'],
+    allergens: [
+      'Beef',
+      'Fish Sauce',
+      'Shrimp paste trace',
+    ],
     ingredients: [
       'Tender beef shank slices',
       'Vietnamese round rice noodles',
@@ -93,13 +175,14 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
   },
   {
     id: 'drop_002',
+    cookId: 'cook_may_02',
     cookName: "Auntie May's Kitchen",
     cookAvatar: 'https://images.unsplash.com/photo-1567532939604-b6b5b0db2604?auto=format&fit=crop&w=200&q=80',
     cookBio: 'Grandmother of three in Tampines with over 35 years of Cantonese wok cooking. Believes good health starts with slow-simmered herbal broths and clean unadulterated ingredients.',
     cookAddressShort: 'Blk 242 Tampines St 21',
     completedBatches: 45,
     cookingSchedule: 'Cantonese slow-simmered meals every Mon & Wed',
-    repeatCustomersPct: 91,
+    repeatCustomerRate: 91,
     mealName: 'Sweet & Sour Kurobuta Pork + Lotus Root Rib Soup',
     mealImage: 'https://images.unsplash.com/photo-1541832676-9b763b0239ab?auto=format&fit=crop&w=600&q=80',
     shortDescription: 'Twice-glazed pork tenderloin in hawthorn sauce, steamed rice, and 3-hour lotus root rib broth.',
@@ -117,8 +200,8 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
     deliveryClusterThreshold: 5,
     dayBucket: 'tonight',
     orderCutoffTime: '4:00 PM (Today)',
-    totalPortions: 15,
-    portionsJoined: 11,
+    batchCapacity: 15,
+    portionsBooked: 11,
     groupOrderThreshold: 15,
     currentDeliveryFee: 3.50,
     unlockedDeliveryFee: 2.00,
@@ -128,7 +211,7 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
       author: 'Kelvin Koh',
       residentArea: 'Tampines St 22 resident',
       orderCount: 9,
-      rating: 5,
+      rating: 5.0,
       comment: 'Tastes exactly like my mother-in-law’s cooking. The lotus root soup is nourishing and rich without MSG.',
     },
     neighbourPhotos: [
@@ -141,14 +224,17 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
         id: 'rev_201',
         author: 'Kelvin Koh',
         avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80',
-        rating: 5,
+        rating: 5.0,
         date: 'Yesterday',
         residentArea: 'Tampines St 22',
         orderCount: 9,
         comment: 'Tastes like mom cooked it. The soup alone is worth every cent.',
       },
     ],
-    allergens: ['Soy', 'Seafood trace in broth'],
+    allergens: [
+      'Soy',
+      'Seafood trace in broth',
+    ],
     ingredients: [
       'Kurobuta pork tenderloin',
       'Fresh lotus root',
@@ -161,15 +247,16 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
   },
   {
     id: 'drop_003',
+    cookId: 'cook_mai_03',
     cookName: "Mai's Home Kitchen",
     cookAvatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80',
     cookBio: 'Hanoi-born home cook in Bugis who has lived in Singapore for 10 years, making comforting street-style and home Vietnamese classics for nearby neighbours.',
     cookAddressShort: 'Blk 4 Bugis Victoria Street',
     completedBatches: 32,
     cookingSchedule: 'Vietnamese family meals every Wed & Fri',
-    repeatCustomersPct: 88,
+    repeatCustomerRate: 88,
     mealName: 'Cơm Tấm Sườn Nướng (Broken Rice with Grilled Pork Chop)',
-    mealImage: comTamImage,
+    mealImage: 'https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?auto=format&fit=crop&w=800&q=80',
     shortDescription: 'Grilled pork chop with broken rice, egg, pickled vegetables and nước chấm.',
     fullDescription: 'Marinated pork chop char-grilled over low heat, served with fragrant broken rice, sunny-side fried egg, house-pickled daikon and carrots, fresh cucumber slices, and garlic-chilli nước chấm.',
     cuisine: 'Vietnamese Home-Style',
@@ -185,8 +272,8 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
     deliveryClusterThreshold: 5,
     dayBucket: 'tonight',
     orderCutoffTime: '5:00 PM (Today)',
-    totalPortions: 20,
-    portionsJoined: 17,
+    batchCapacity: 20,
+    portionsBooked: 17,
     groupOrderThreshold: 20,
     currentDeliveryFee: 3.50,
     unlockedDeliveryFee: 2.00,
@@ -196,11 +283,11 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
       author: 'Marcus Ho',
       residentArea: 'Rochor resident',
       orderCount: 5,
-      rating: 5,
+      rating: 5.0,
       comment: 'The pork chop was charred just right and broken rice was fluffy and fragrant. The nước chấm ties the whole dish together!',
     },
     neighbourPhotos: [
-      comTamImage,
+      'https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1559847844-5315695dadae?auto=format&fit=crop&w=400&q=80',
       'https://images.unsplash.com/photo-1626777552726-4a6b54c97e46?auto=format&fit=crop&w=400&q=80',
     ],
@@ -209,14 +296,17 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
         id: 'rev_301',
         author: 'Marcus Ho',
         avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80',
-        rating: 5,
+        rating: 5.0,
         date: '3 days ago',
         residentArea: 'Rochor Centre',
         orderCount: 5,
         comment: 'The pork chop was charred just right and broken rice was fluffy. Super authentic.',
       },
     ],
-    allergens: ['Fish sauce', 'Egg'],
+    allergens: [
+      'Fish sauce',
+      'Egg',
+    ],
     ingredients: [
       'Broken rice (cơm tấm)',
       'Marinated grilled pork chop',
@@ -229,13 +319,14 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
   },
   {
     id: 'drop_004',
+    cookId: 'cook_priya_04',
     cookName: "Priya's Home Tiffin",
     cookAvatar: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=200&q=80',
     cookBio: 'North Indian home cook settled in Clementi. Prepares wholesome homestyle vegetarian tiffins without heavy oil or commercial restaurant coloring.',
     cookAddressShort: 'Blk 354 Clementi Ave 2',
     completedBatches: 19,
     cookingSchedule: 'Homestyle vegetarian tiffins on Tue & Thu',
-    repeatCustomersPct: 79,
+    repeatCustomerRate: 79,
     mealName: 'Paneer Butter Masala with 3 Soft Rotis & Jeera Rice',
     mealImage: 'https://images.unsplash.com/photo-1631452180519-c014fe946bc7?auto=format&fit=crop&w=600&q=80',
     shortDescription: 'Fresh cottage cheese in roasted tomato cashew gravy, 3 hot wholewheat rotis, jeera rice & raita.',
@@ -253,8 +344,8 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
     deliveryClusterThreshold: 5,
     dayBucket: 'tomorrow',
     orderCutoffTime: '10:30 AM (Tomorrow)',
-    totalPortions: 12,
-    portionsJoined: 7,
+    batchCapacity: 12,
+    portionsBooked: 7,
     groupOrderThreshold: 12,
     currentDeliveryFee: 4.50,
     unlockedDeliveryFee: 2.50,
@@ -264,7 +355,7 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
       author: 'Siddharth Rao',
       residentArea: 'Clementi Ave 2 resident',
       orderCount: 4,
-      rating: 5,
+      rating: 5.0,
       comment: 'Paneer was super soft and rotis arrived warm wrapped in foil. True home-cooked comfort with very light oil.',
     },
     neighbourPhotos: [
@@ -276,14 +367,17 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
         id: 'rev_401',
         author: 'Siddharth Rao',
         avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=100&q=80',
-        rating: 5,
+        rating: 5.0,
         date: 'Last week',
         residentArea: 'Blk 352 Clementi',
         orderCount: 4,
         comment: 'Paneer was super soft and rotis arrived warm in foil wrapping. Highly recommend!',
       },
     ],
-    allergens: ['Dairy', 'Cashew nuts'],
+    allergens: [
+      'Dairy',
+      'Cashew nuts',
+    ],
     ingredients: [
       'Artisanal cottage cheese (paneer)',
       'Vine-ripened tomatoes & cashews',
@@ -295,13 +389,14 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
   },
   {
     id: 'drop_005',
+    cookId: 'cook_sarah_05',
     cookName: 'Nourish by Sarah',
     cookAvatar: 'https://images.unsplash.com/photo-1548142813-c348350df52b?auto=format&fit=crop&w=200&q=80',
     cookBio: 'Sports nutritionist and Queenstown resident preparing clean, nutrient-dense macro-balanced home meals for busy neighbours and desk workers.',
     cookAddressShort: 'Blk 52 Strathmore Ave',
     completedBatches: 31,
     cookingSchedule: 'Nutrient-rich bowls every Tue, Thu & Sat',
-    repeatCustomersPct: 92,
+    repeatCustomerRate: 92,
     mealName: 'Grilled Miso Salmon Bowl with Quinoa & Edamame',
     mealImage: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80',
     shortDescription: 'Miso Norwegian salmon fillet, tri-color quinoa, roasted kabocha squash, charred edamame & ginger dip.',
@@ -319,8 +414,8 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
     deliveryClusterThreshold: 5,
     dayBucket: 'tomorrow',
     orderCutoffTime: '4:30 PM (Tomorrow)',
-    totalPortions: 15,
-    portionsJoined: 14,
+    batchCapacity: 15,
+    portionsBooked: 14,
     groupOrderThreshold: 15,
     currentDeliveryFee: 4.00,
     unlockedDeliveryFee: 2.00,
@@ -330,7 +425,7 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
       author: 'Chloe Lim',
       residentArea: 'Strathmore Ave resident',
       orderCount: 7,
-      rating: 5,
+      rating: 5.0,
       comment: 'Finally healthy home food that is properly seasoned! The salmon portion is hearty and the dressing is on point.',
     },
     neighbourPhotos: [
@@ -342,14 +437,18 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
         id: 'rev_501',
         author: 'Chloe Lim',
         avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=100&q=80',
-        rating: 5,
+        rating: 5.0,
         date: '2 days ago',
         residentArea: 'Dawson SkyVille',
         orderCount: 7,
         comment: 'Finally healthy food that actually tastes seasoned! Only 1 order left for tomorrow so glad I grabbed one.',
       },
     ],
-    allergens: ['Fish', 'Soy', 'Sesame'],
+    allergens: [
+      'Fish',
+      'Soy',
+      'Sesame',
+    ],
     ingredients: [
       'Norwegian salmon fillet (180g)',
       'White organic Shiro miso',
@@ -362,13 +461,14 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
   },
   {
     id: 'drop_006',
+    cookId: 'cook_tan_06',
     cookName: 'Tan Family Kitchen',
     cookAvatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=200&q=80',
     cookBio: 'Father-and-son cooking duo in Jurong East recreating heritage claypot recipes perfected over three generations. Uses earthenware pots for proper crust.',
     cookAddressShort: 'Blk 112 Jurong East St 13',
     completedBatches: 15,
     cookingSchedule: 'Claypot weekend feast sets every Saturday',
-    repeatCustomersPct: 82,
+    repeatCustomerRate: 82,
     mealName: 'Claypot Sesame Chicken & Shiitake Rice (Family Set for 3-4)',
     mealImage: 'https://images.unsplash.com/photo-1512058564366-18510be2db19?auto=format&fit=crop&w=600&q=80',
     shortDescription: 'Fragrant dark soya chicken slow-cooked with whole shiitakes, lap cheong, ginger & crispy rice bottom crust.',
@@ -386,8 +486,8 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
     deliveryClusterThreshold: 4,
     dayBucket: 'weekend',
     orderCutoffTime: '3:00 PM (Saturday)',
-    totalPortions: 10,
-    portionsJoined: 8,
+    batchCapacity: 10,
+    portionsBooked: 8,
     groupOrderThreshold: 10,
     currentDeliveryFee: 5.00,
     unlockedDeliveryFee: 3.00,
@@ -397,7 +497,7 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
       author: 'Bernard Teo',
       residentArea: 'Jurong East St 24 resident',
       orderCount: 3,
-      rating: 5,
+      rating: 5.0,
       comment: 'Fed our family of 4 comfortably. The crispy rice bottom was sensational and still hot upon pickup!',
     },
     neighbourPhotos: [
@@ -409,14 +509,18 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
         id: 'rev_601',
         author: 'Bernard Teo',
         avatar: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?auto=format&fit=crop&w=100&q=80',
-        rating: 5,
+        rating: 5.0,
         date: 'Last Saturday',
         residentArea: 'Jurong East St 24',
         orderCount: 3,
         comment: 'Fed our family of 4 comfortably. The crispy rice bottom was sensational!',
       },
     ],
-    allergens: ['Soy', 'Sesame', 'Pork (Lap cheong)'],
+    allergens: [
+      'Soy',
+      'Sesame',
+      'Pork (Lap cheong)',
+    ],
     ingredients: [
       'Fresh chicken thighs',
       'Whole dried shiitake mushrooms',
@@ -427,4 +531,128 @@ export const MOCK_MEAL_DROPS: MealDrop[] = [
     ],
     status: 'OPEN',
   },
-];
+  /**
+   * Server-only batch retained for future use. Deliberately outside the
+   * approved drop_001-drop_006 range and not exposed in the frontend yet.
+   */
+  {
+    id: 'drop_007',
+    cookId: 'cook_fazilah_04',
+    cookName: "Kak Fazilah's Dapur",
+    cookAvatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=200&q=80',
+    cookBio: 'Passionate home chef living in Queenstown for 15 years. Uses heritage spices stone-ground by hand and fresh coconut milk pressed daily from the wet market.',
+    cookAddressShort: 'Blk 52 Strathmore Ave',
+    completedBatches: 31,
+    cookingSchedule: 'Rendang and traditional Malay feast every Sat',
+    repeatCustomerRate: 88,
+    mealName: 'Slow-Simmered Beef Rendang Tok + Nasi Kunyit Set',
+    mealImage: 'https://images.unsplash.com/photo-1574484284002-952d92456975?auto=format&fit=crop&w=600&q=80',
+    shortDescription: 'Tender beef shank caramelized in toasted coconut kerisik, fragrant turmeric rice & sambal telur.',
+    fullDescription: 'The crown jewel of Malay hospitality. 5 hours of patient reduction ensures the beef is melt-in-mouth tender while absorbing roasted spices, lemongrass, and freshly pounded kerisik. Served alongside fragrant pandan turmeric rice, sambal egg, and spiced achar.',
+    cuisine: 'Malay Heritage (Muslim-Owned Home)',
+    pricePerPortion: 12.00,
+    neighbourhood: 'Queenstown',
+    distanceKm: 3.5,
+    pickupLocation: 'Blk 52 Strathmore Ave (Void Deck Resident Corner)',
+    pickupWindow: '12:00 – 1:30 PM (Saturday Lunch)',
+    deliveryArea: 'Queenstown, Dawson, Redhill, Tanglin Halt',
+    deliveryWindow: '12:00 – 1:30 PM',
+    deliveryClusterName: 'Strathmore Green Cluster',
+    deliveryClusterHouseholdsJoined: 5,
+    deliveryClusterThreshold: 5,
+    dayBucket: 'weekend',
+    orderCutoffTime: 'Fri 8:00 PM',
+    batchCapacity: 20,
+    portionsBooked: 20,
+    groupOrderThreshold: 18,
+    currentDeliveryFee: 2.00,
+    unlockedDeliveryFee: 2.00,
+    rating: 5.0,
+    reviewCount: 42,
+    featuredReview: {
+      author: 'Farhan Ibrahim',
+      residentArea: 'Dawson Road resident',
+      orderCount: 5,
+      rating: 5,
+      comment: 'Hands down the best rendang in Queenstown. Thick caramelized kerisik coat, not watery curry. Already unlocked S$2 delivery!',
+    },
+    neighbourPhotos: [
+      'https://images.unsplash.com/photo-1574484284002-952d92456975?auto=format&fit=crop&w=600&q=80',
+    ],
+    reviews: [],
+    allergens: ['Beef', 'Eggs', 'Coconut'],
+    ingredients: [
+      'Prime beef shank & brisket',
+      'Freshly grated and toasted coconut kerisik',
+      'Galangal, turmeric, lemongrass, shallots',
+      'Pandan turmeric fragrant rice',
+      'Hard-boiled farm egg in sambal tumis',
+    ],
+    status: 'SOLD_OUT',
+  }];
+
+let batchesState: MarketplaceBatch[] = JSON.parse(JSON.stringify(INITIAL_BATCHES));
+
+export function getAllBatches(neighbourhood?: string) {
+  let list = batchesState;
+  if (neighbourhood && neighbourhood !== 'All') {
+    list = list.filter(
+      (b) => b.neighbourhood.toLowerCase() === neighbourhood.toLowerCase()
+    );
+  }
+
+  // Calculate cluster fee status deterministically
+  return list.map((b) => {
+    const fee =
+      b.deliveryClusterHouseholdsJoined >= b.deliveryClusterThreshold
+        ? b.unlockedDeliveryFee
+        : b.currentDeliveryFee;
+    return {
+      ...b,
+      effectiveDeliveryFee: fee,
+    };
+  });
+}
+
+export function getBatchById(id: string): MarketplaceBatch | null {
+  const batch = batchesState.find((b) => b.id === id);
+  if (!batch) return null;
+
+  const fee =
+    batch.deliveryClusterHouseholdsJoined >= batch.deliveryClusterThreshold
+      ? batch.unlockedDeliveryFee
+      : batch.currentDeliveryFee;
+
+  return {
+    ...batch,
+    currentDeliveryFee: fee,
+  };
+}
+
+export function registerOrderInBatch(
+  batchId: string,
+  quantity: number,
+  fulfilmentType: 'pickup' | 'delivery'
+) {
+  const index = batchesState.findIndex((b) => b.id === batchId);
+  if (index === -1) return null;
+
+  const batch = batchesState[index];
+  const newBooked = batch.portionsBooked + quantity;
+  const newHouseholds =
+    fulfilmentType === 'delivery'
+      ? batch.deliveryClusterHouseholdsJoined + 1
+      : batch.deliveryClusterHouseholdsJoined;
+
+  const isSoldOut = newBooked >= batch.batchCapacity;
+  const isUnlocked = newBooked >= batch.groupOrderThreshold;
+
+  batchesState[index] = {
+    ...batch,
+    portionsBooked: newBooked,
+    deliveryClusterHouseholdsJoined: newHouseholds,
+    status: isSoldOut ? 'SOLD_OUT' : isUnlocked ? 'UNLOCKED' : batch.status,
+  };
+
+  return batchesState[index];
+}

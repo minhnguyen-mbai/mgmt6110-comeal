@@ -1,0 +1,6 @@
+{
+  "name": "CoMeal SG",
+  "description": "Home-cooked meals, ordered together. Neighbourhood home cooks and group ordering marketplace for Singapore.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

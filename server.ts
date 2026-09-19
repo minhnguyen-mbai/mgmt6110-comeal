@@ -1,3 +1,10 @@
+/**
+ * Local / self-hosted entrypoint.
+ *
+ * Runs the same API app as production plus the frontend: Vite middleware in
+ * development, static `dist` otherwise. Vercel does NOT use this file - it
+ * serves the built frontend itself and runs api/index.ts as a function.
+ */
 import dotenv from 'dotenv';
 
 // Load local secrets before anything reads process.env.
@@ -6,37 +13,21 @@ import dotenv from 'dotenv';
 dotenv.config({ path: '.env.local' });
 dotenv.config();
 
-import express from 'express';
 import path from 'path';
+import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import { healthRouter } from './server/routes/health';
-import { weatherRouter } from './server/routes/weather';
-import { locationRouter } from './server/routes/location';
-import { mealBatchesRouter } from './server/routes/mealBatches';
-import { orderIntentRouter } from './server/routes/orderIntent';
-import { eventsRouter } from './server/routes/events';
-import { commentsRouter } from './server/routes/comments';
+import { createApiApp } from './server/app';
 import { initStorage } from './server/lib/storage';
 
 async function startServer() {
-  const app = express();
-  const PORT = 3000;
+  // Respect the platform-provided port; fall back to 3000 for local use.
+  const PORT = Number(process.env.PORT) || 3000;
 
-  // Pre-initialize persistent file storage
   await initStorage();
 
-  app.use(express.json());
+  // API routes are registered first so they always win over the SPA fallback.
+  const app = createApiApp();
 
-  // API routes go here FIRST
-  app.use('/api/health', healthRouter);
-  app.use('/api/weather', weatherRouter);
-  app.use('/api/location', locationRouter);
-  app.use('/api/meal-batches', mealBatchesRouter);
-  app.use('/api/order-intent', orderIntentRouter);
-  app.use('/api/events', eventsRouter);
-  app.use('/api/comments', commentsRouter);
-
-  // Vite middleware setup
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
